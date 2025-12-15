@@ -47,6 +47,7 @@ def session(engine):
 @pytest.fixture
 def client(session):
     from app.main import app
+    #
 
     def override_get_db():
         try:
