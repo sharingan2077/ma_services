@@ -1,0 +1,105 @@
+version: '3.8'
+
+services:
+
+  # База данных
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: advertisement_db
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 12345
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - observability_net
+
+
+  # Ваш основной сервис
+  advertisement_service:
+    build: ../advertisement_service
+    ports:
+      - "8001:8000"
+    environment:
+      - POSTGRES_URL=postgresql://postgres:12345@postgres:5432/advertisement_db
+      - LOG_LEVEL=INFO
+    labels:
+      - "job=advertisement_service"
+    networks:
+      - observability_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+      loki:
+        condition: service_started
+
+
+
+  # Логирование: Loki
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - observability_net
+
+  # Логирование: Promtail (сбор логов)
+  promtail:
+    image: grafana/promtail:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./promtail-config.yml:/etc/promtail/config.yml
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - observability_net
+    depends_on:
+      - loki
+
+  # Визуализация: Grafana
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=grafana-piechart-panel
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks:
+      - observability_net
+    depends_on:
+      - loki
+      - prometheus
+
+  # Мониторинг: Prometheus
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    networks:
+      - observability_net
+
+volumes:
+  postgres_data:
+  grafana_data:
+  prometheus_data:
+
+networks:
+  observability_net:
+    driver: bridge
